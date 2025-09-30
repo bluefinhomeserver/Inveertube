@@ -35,7 +35,7 @@ document.getElementById('searchBtn').addEventListener('click', function () {
   var peerTubeBase   = 'https://peertube.wtf';
 
   var ytURL = invidiousBase + '/search?q=' + encodeURIComponent(query);
-  var ptURL = peerTubeBase   + '/search?q=' + encodeURIComponent(query);
+  var ptURL = peerTubeBase   + '/search?search=' + encodeURIComponent(query);
 
   // 3️⃣ Desired size & position (adjust if you like)
   var screenW = window.screen.availWidth;
