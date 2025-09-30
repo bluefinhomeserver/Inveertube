@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Unified YouTube + PeerTube Search</title>
+<style>
+  body {font-family:Arial,sans-serif;background:#fafafa;margin:0;padding:0;}
+  header {background:#202124;color:#fff;padding:1rem;text-align:center;}
+  #searchBox {width:80%;max-width:500px;padding:.5rem;font-size:1rem;}
+  #results {display:flex;flex-wrap:wrap;justify-content:center;padding:1rem;}
+  .card {
+    background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,.1);
+    margin:0.75rem;width:280px;overflow:hidden;display:flex;flex-direction:column;
+  }
+  .thumb {position:relative;cursor:pointer;}
+  .thumb img {width:100%;height:auto;display:block;}
+  .badge {position:absolute;top:8px;right:8px;background:#000a;color:#fff;
+          padding:2px 6px;border-radius:4px;font-size:.75rem;}
+  .info {padding:.75rem;flex-grow:1;display:flex;flex-direction:column;}
+  .title {font-weight:bold;margin-bottom:.5rem;flex-grow:1;}
+  .meta {color:#555;font-size:.85rem;}
+  .playerOverlay {position:fixed;top:0;left:0;width:100vw;height:100vh;
+                  background:rgba(0,0,0,.8);display:none;align-items:center;
+                  justify-content:center;z-index:1000;}
+  .playerOverlay iframe {width:90vw;height:50vh;max-height:80vh;border:none;}
+  .closeBtn {position:absolute;top:15px;right:20px;color:#fff;font-size:1.5rem;
+             cursor:pointer;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Unified YouTube + PeerTube Search</h1>
+  <input id="searchBox" type="text" placeholder="Enter keywords…" />
+</header>
+
+<div id="results"></div>
+
+<div class="playerOverlay" id="playerOverlay">
+  <span class="closeBtn" id="closeBtn">&times;</span>
+  <iframe id="playerIframe" src="" allowfullscreen></iframe>
+</div>
+
+<script>
+// ---------- CONFIGURATION ----------
+const INVIDIOUS_INSTANCE = "https://invidious.bluefinhomeserver.uk"; // <-- replace if you prefer another
+// List ONE or MORE PeerTube instances (comma‑separated)
+const PEERTUBE_INSTANCES = [
+  "https://peertube.cpy.re",https://peertube.wtf,https://pt.thishorsie.rocks
+  // "https://peer.tube",   // you can add more here
+];
+
+// ---------- HELPERS ----------
+function isoDurationToHuman(iso) {
+  // ISO 8601 duration (e.g. PT1H2M30S) → H:MM:SS
+  const match = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso);
+  const h = parseInt(match[1]||0,10);
+  const m = parseInt(match[2]||0,10);
+  const s = parseInt(match[3]||0,10);
+  const parts = [];
+  if (h) parts.push(h);
+  parts.push(h? String(m).padStart(2,'0') : m);
+  parts.push(String(s).padStart(2,'0'));
+  return parts.join(':');
+}
+
+// ---------- SEARCH LOGIC ----------
+async function search(query) {
+  const results = [];
+
+  // 1️⃣ Invidious (YouTube)
+  try {
+    const ytResp = await fetch(`${INVIDIOUS_INSTANCE}/api/v1/search?q=${encodeURIComponent(query)}&type=video`);
+    const ytData = await ytResp.json();
+    ytData.forEach(v => {
+      results.push({
+        source: "youtube",
+        title: v.title,
+        thumb: v.videoThumbnails?.[0]?.url || '',
+        videoId: v.videoId,
+        duration: v.lengthSeconds ? `${Math.floor(v.lengthSeconds/60)}:${String(v.lengthSeconds%60).padStart(2,'0')}` : '',
+        views: v.viewCount || 0,
+        url: `${INVIDIOUS_INSTANCE}/watch?v=${v.videoId}`
+      });
+    });
+  } catch(e){ console.error("Invidious error:",e); }
+
+  // 2️⃣ PeerTube (loop over each instance)
+  for (const pt of PEERTUBE_INSTANCES) {
+    try {
+      const ptResp = await fetch(`${pt}/api/v1/search/videos?search=${encodeURIComponent(query)}`);
+      const ptData = await ptResp.json();
+      (ptData.data || []).forEach(v => {
+        results.push({
+          source: "peertube",
+          instance: pt,
+          title: v.name,
+          thumb: v.thumbnailPath ? `${pt}${v.thumbnailPath}` : '',
+          videoId: v.uuid,
+          duration: v.duration ? isoDurationToHuman(v.duration) : '',
+          views: v.views || 0,
+          url: `${pt}/videos/watch/${v.uuid}`
+        });
+      });
+    } catch(e){ console.error(`PeerTube ${pt} error:`,e); }
+  }
+
+  // 3️⃣ Sort (most views first – you can change this)
+  results.sort((a,b)=> (b.views||0)-(a.views||0));
+
+  renderResults(results);
+}
+
+// ---------- RENDER ----------
+function renderResults(items){
+  const container = document.getElementById('results');
+  container.innerHTML = ''; // clear previous
+
+  items.forEach(item=>{
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const thumbDiv = document.createElement('div');
+    thumbDiv.className = 'thumb';
+    const img = document.createElement('img');
+    img.src = item.thumb || 'https://via.placeholder.com/280x158?text=no+thumb';
+    thumbDiv.appendChild(img);
+
+    const badge = document.createElement('span');
+    badge.className = 'badge';
+    badge.textContent = item.source === 'youtube' ? 'YouTube' : new URL(item.instance).hostname;
+    thumbDiv.appendChild(badge);
+    thumbDiv.onclick = () => openPlayer(item);
+    card.appendChild(thumbDiv);
+
+    const info = document.createElement('div');
+    info.className = 'info';
+    const title = document.createElement('div');
+    title.className = 'title';
+    title.textContent = item.title;
+    info.appendChild(title);
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = `${item.duration || '–'} • ${Number(item.views).toLocaleString()} views`;
+    info.appendChild(meta);
+    card.appendChild(info);
+
+    container.appendChild(card);
+  });
+}
+
+// ---------- PLAYER ----------
+function openPlayer(item){
+  const overlay = document.getElementById('playerOverlay');
+  const iframe = document.getElementById('playerIframe');
+
+  // Build embed URL
+  let embedUrl = '';
+  if (item.source === 'youtube'){
+    // Invidious embed (no Google cookies)
+    embedUrl = `${INVIDIOUS_INSTANCE}/embed/${item.videoId}?autoplay=1`;
+  } else {
+    // PeerTube embed format
+    embedUrl = `${item.instance}/videos/embed/${item.videoId}?autoplay=1`;
+  }
+
+  iframe.src = embedUrl;
+  overlay.style.display = 'flex';
+}
+document.getElementById('closeBtn').onclick = ()=>{
+  const overlay = document.getElementById('playerOverlay');
+  const iframe = document.getElementById('playerIframe');
+  iframe.src = '';
+  overlay.style.display = 'none';
+};
+
+// ---------- INPUT HANDLING ----------
+document.getElementById('searchBox').addEventListener('keypress', e=>{
+  if (e.key === 'Enter'){
+    const q = e.target.value.trim();
+    if (q) search(q);
+  }
+});
+</script>
+
+</body>
+</html>
