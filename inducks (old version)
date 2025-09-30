@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Side‑by‑Side YouTube + PeerTube Search</title>
+<style>
+  body{font-family:Arial,sans-serif;background:#f5f5f5;padding:2rem;text-align:center;}
+  button{
+    font-size:1.1rem;padding:.75rem 1.5rem;
+    background:#0066cc;color:#fff;border:none;border-radius:4px;
+    cursor:pointer;transition:background .2s;
+  }
+  button:hover{background:#004999;}
+</style>
+</head>
+<body>
+
+<h2>Search YouTube (via Invidious) + PeerTube</h2>
+<p>Enter a query once – the script will open two windows placed next to each other.</p>
+
+<button id="searchBtn">Search YouTube + PeerTube</button>
+
+<script>
+/**
+ * Opens two pop‑up windows (Invidious & PeerTube) side‑by‑side.
+ * If the browser blocks the pop‑ups, it falls back to opening normal tabs.
+ */
+document.getElementById('searchBtn').addEventListener('click', function () {
+  // 1️⃣ Get the search term from the user
+  var query = prompt('Search query:');
+  if (!query) return;                     // user cancelled
+
+  // 2️⃣ Build the URLs (feel free to swap the instances)
+  var invidiousBase = 'https://invidious.bluefinhomeserver.uk';
+  var peerTubeBase   = 'https://peertube.wtf';
+
+  var ytURL = invidiousBase + '/search?q=' + encodeURIComponent(query);
+  var ptURL = peerTubeBase   + '/search?search=' + encodeURIComponent(query);
+
+  // 3️⃣ Desired size & position (adjust if you like)
+  var screenW = window.screen.availWidth;
+  var screenH = window.screen.availHeight;
+
+  // Split the screen roughly in half, leave a tiny gap
+  var winW = Math.floor(screenW / 2) - 10;   // width of each window
+  var winH = Math.floor(screenH * 0.85);    // height (85 % of screen)
+
+  var leftX  = 5;                          // left‑hand window starts near left edge
+  var rightX = winW + 15;                  // right‑hand window starts after the left one
+
+  // 4️⃣ Try to open pop‑ups with explicit size/position
+  var ytWin = window.open(
+    ytURL,
+    '_blank',
+    'toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,' +
+    'width=' + winW + ',height=' + winH + ',left=' + leftX + ',top=5'
+  );
+
+  var ptWin = window.open(
+    ptURL,
+    '_blank',
+    'toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,' +
+    'width=' + winW + ',height=' + winH + ',left=' + rightX + ',top=5'
+  );
+
+  // 5️⃣ If either pop‑up was blocked, fall back to normal tabs
+  if (!ytWin || ytWin.closed || typeof ytWin.closed == 'undefined') {
+    window.open(ytURL, '_blank');
+  }
+  if (!ptWin || ptWin.closed || typeof ptWin.closed == 'undefined') {
+    window.open(ptURL, '_blank');
+  }
+});
+</script>
+
+</body>
+</html>
