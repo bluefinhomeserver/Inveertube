@@ -2,73 +2,215 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Side‑by‑Side YouTube + PeerTube Search</title>
+<title>Unified YouTube + PeerTube Search (inline)</title>
 <style>
-  body{font-family:Arial,sans-serif;background:#f5f5f5;padding:2rem;text-align:center;}
-  button{
-    font-size:1.1rem;padding:.75rem 1.5rem;
-    background:#0066cc;color:#fff;border:none;border-radius:4px;
-    cursor:pointer;transition:background .2s;
+  body{font-family:Arial,sans-serif;background:#f5f5f5;margin:0;padding:1rem;}
+  h1{margin-top:0;text-align:center;color:#333;}
+  #searchBar{display:flex;justify-content:center;margin-bottom:1rem;}
+  #searchInput{
+    width:80%;max-width:500px;padding:.5rem 1rem;font-size:1rem;
+    border:1px solid #bbb;border-radius:4px;
   }
-  button:hover{background:#004999;}
+  #tabs{display:flex;justify-content:center;margin-bottom:.5rem;}
+  .tab{
+    padding:.5rem 1rem;margin:0 .25rem;cursor:pointer;
+    background:#e0e0e0;border-radius:4px 4px 0 0;
+  }
+  .tab.active{background:#fff;border-bottom:2px solid #fff;font-weight:bold;}
+  #panels{display:flex;gap:1rem;flex-wrap:wrap;justify-content:center;}
+  .panel{
+    flex:1 1 480px;max-width:48%;background:#fff;
+    border:1px solid #ddd;border-radius:4px;overflow:hidden;
+    display:none; /* hidden until a tab is active */
+  }
+  .panel.active{display:block;}
+  .result-card{
+    display:flex;flex-direction:column;background:#fafafa;
+    margin:.5rem;border-radius:4px;overflow:hidden;
+    box-shadow:0 1px 3px rgba(0,0,0,.1);
+  }
+  .thumb{position:relative;cursor:pointer;}
+  .thumb img{width:100%;height:auto;display:block;}
+  .badge{position:absolute;top:6px;right:6px;background:#000a;color:#fff;
+         padding:2px 6px;border-radius:4px;font-size:.75rem;}
+  .info{padding:.5rem 0.75rem;flex-grow:1;display:flex;flex-direction:column;}
+  .title{font-weight:bold;margin-bottom:.25rem;flex-grow:1;}
+  .meta{color:#555;font-size:.85rem;}
+  /* overlay player */
+  #playerOverlay{
+    position:fixed;top:0;left:0;width:100vw;height:100vh;
+    background:rgba(0,0,0,.85);display:none;align-items:center;
+    justify-content:center;z-index:1000;
+  }
+  #playerOverlay iframe{width:90vw;height:55vh;max-height:80vh;border:none;}
+  #closePlayer{position:absolute;top:15px;right:20px;color:#fff;
+               font-size:1.8rem;cursor:pointer;}
 </style>
 </head>
 <body>
 
-<h2>Search YouTube (via Invidious) + PeerTube</h2>
-<p>Enter a query once – the script will open two windows placed next to each other.</p>
+<h1>Search YouTube + PeerTube (inline)</h1>
 
-<button id="searchBtn">Search YouTube + PeerTube</button>
+<div id="searchBar">
+  <input id="searchInput" type="text" placeholder="Enter search term and press ↵">
+</div>
+
+<div id="tabs">
+  <div class="tab active" data-target="ytPanel">YouTube (Invidious)</div>
+  <div class="tab" data-target="ptPanel">PeerTube (SepiaSearch)</div>
+</div>
+
+<div id="panels">
+  <div id="ytPanel" class="panel active"></div>
+  <div id="ptPanel" class="panel"></div>
+</div>
+
+<!-- Player overlay (used for both services) -->
+<div id="playerOverlay">
+  <span id="closePlayer">&times;</span>
+  <iframe id="playerIframe" src="" allowfullscreen></iframe>
+</div>
 
 <script>
-/**
- * Opens two pop‑up windows (Invidious & PeerTube) side‑by‑side.
- * If the browser blocks the pop‑ups, it falls back to opening normal tabs.
- */
-document.getElementById('searchBtn').addEventListener('click', function () {
-  // 1️⃣ Get the search term from the user
-  var query = prompt('Search query:');
-  if (!query) return;                     // user cancelled
+/* ==================== CONFIGURATION ==================== */
+const INVIDIOUS_INSTANCE = "https://invidious.bluefinhomeserver.uk";   // change if you prefer another
+const SEPIASEARCH_API   = "https://sepiasearch.org"; // public SepiaSearch endpoint
 
-  // 2️⃣ Build the URLs (feel free to swap the instances)
-  var invidiousBase = 'https://invidious.bluefinhomeserver.uk';
-  var peerTubeBase   = 'https://peertube.wtf';
+/* ==================== HELPERS ==================== */
+function isoDurToHuman(iso){
+  const m = /PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/.exec(iso);
+  const h = parseInt(m[1]||0,10);
+  const min = parseInt(m[2]||0,10);
+  const sec = parseInt(m[3]||0,10);
+  const parts = [];
+  if (h) parts.push(h);
+  parts.push(h? String(min).padStart(2,'0') : min);
+  parts.push(String(sec).padStart(2,'0'));
+  return parts.join(':');
+}
 
-  var ytURL = invidiousBase + '/search?q=' + encodeURIComponent(query);
-  var ptURL = peerTubeBase   + '/search?search=' + encodeURIComponent(query);
+/* ==================== SEARCH LOGIC ==================== */
+async function performSearch(query){
+  // Clear previous results
+  document.getElementById('ytPanel').innerHTML = '';
+  document.getElementById('ptPanel').innerHTML = '';
 
-  // 3️⃣ Desired size & position (adjust if you like)
-  var screenW = window.screen.availWidth;
-  var screenH = window.screen.availHeight;
+  // ---- 1️⃣ Invidious (YouTube) ----
+  try{
+    const ytResp = await fetch(
+      `${INVIDIOUS_INSTANCE}/search?q=${encodeURIComponent(query)}&type=video`
+    );
+    const ytData = await ytResp.json();
+    ytData.forEach(v=> renderCard(v, 'youtube'));
+  }catch(e){ console.error('Invidious error:',e); }
 
-  // Split the screen roughly in half, leave a tiny gap
-  var winW = Math.floor(screenW / 2) - 10;   // width of each window
-  var winH = Math.floor(screenH * 0.85);    // height (85 % of screen)
+  // ---- 2️⃣ SepiaSearch (PeerTube) ----
+  try{
+    const ptResp = await fetch(
+      `${SEPIASEARCH_API}/search?search=${encodeURIComponent(query)}&type=videos`
+    );
+    const ptData = await ptResp.json();
+    (ptData.data || []).forEach(v=> renderCard(v, 'peertube'));
+  }catch(e){ console.error('SepiaSearch error:',e); }
+}
 
-  var leftX  = 5;                          // left‑hand window starts near left edge
-  var rightX = winW + 15;                  // right‑hand window starts after the left one
+/* ==================== RENDER CARD ==================== */
+function renderCard(item, source){
+  const panel = source === 'youtube' ? document.getElementById('ytPanel')
+                                    : document.getElementById('ptPanel');
 
-  // 4️⃣ Try to open pop‑ups with explicit size/position
-  var ytWin = window.open(
-    ytURL,
-    '_blank',
-    'toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,' +
-    'width=' + winW + ',height=' + winH + ',left=' + leftX + ',top=5'
-  );
+  // Normalise fields so the UI can treat them the same
+  const normalized = {
+    title:    source === 'youtube' ? item.title : item.name,
+    thumb:    source === 'youtube'
+                ? (item.videoThumbnails?.[0]?.url || '')
+                : (item.thumbnailPath ? `https://joinpeertube.org${item.thumbnailPath}` : ''),
+    videoId:  source === 'youtube' ? item.videoId : item.uuid,
+    duration: source === 'youtube'
+                ? (item.lengthSeconds
+                    ? `${Math.floor(item.lengthSeconds/60)}:${String(item.lengthSeconds%60).padStart(2,'0')}`
+                    : '')
+                : (item.duration ? isoDurToHuman(item.duration) : ''),
+    views:    source === 'youtube' ? item.viewCount : item.views,
+    source:   source,
+    // For PeerTube we need the base URL for the embed player
+    baseUrl:  source === 'youtube' ? INVIDIOUS_INSTANCE
+                                   : 'https://joinpeertube.org'
+  };
 
-  var ptWin = window.open(
-    ptURL,
-    '_blank',
-    'toolbar=no,location=no,status=no,menubar=no,scrollbars=yes,resizable=yes,' +
-    'width=' + winW + ',height=' + winH + ',left=' + rightX + ',top=5'
-  );
+  // ---- Build the card DOM ----
+  const card = document.createElement('div');
+  card.className = 'result-card';
 
-  // 5️⃣ If either pop‑up was blocked, fall back to normal tabs
-  if (!ytWin || ytWin.closed || typeof ytWin.closed == 'undefined') {
-    window.open(ytURL, '_blank');
+  const thumbDiv = document.createElement('div');
+  thumbDiv.className = 'thumb';
+  const img = document.createElement('img');
+  img.src = normalized.thumb || 'https://via.placeholder.com/280x158?text=no+thumb';
+  thumbDiv.appendChild(img);
+
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  badge.textContent = source === 'youtube' ? 'YouTube' : 'PeerTube';
+  thumbDiv.appendChild(badge);
+  thumbDiv.onclick = () => openPlayer(normalized);
+  card.appendChild(thumbDiv);
+
+  const info = document.createElement('div');
+  info.className = 'info';
+  const title = document.createElement('div');
+  title.className = 'title';
+  title.textContent = normalized.title;
+  info.appendChild(title);
+
+  const meta = document.createElement('div');
+  meta.className = 'meta';
+  meta.textContent = `${normalized.duration || '–'} • ${Number(normalized.views).toLocaleString()} views`;
+  info.appendChild(meta);
+  card.appendChild(info);
+
+  panel.appendChild(card);
+}
+
+/* ==================== PLAYER OVERLAY ==================== */
+function openPlayer(item){
+  const overlay = document.getElementById('playerOverlay');
+  const iframe  = document.getElementById('playerIframe');
+
+  let embedUrl = '';
+  if (item.source === 'youtube'){
+    embedUrl = `${INVIDIOUS_INSTANCE}/embed/${item.videoId}?autoplay=1`;
+  }else{
+    embedUrl = `${item.baseUrl}/videos/embed/${item.videoId}?autoplay=1`;
   }
-  if (!ptWin || ptWin.closed || typeof ptWin.closed == 'undefined') {
-    window.open(ptURL, '_blank');
+  iframe.src = embedUrl;
+  overlay.style.display = 'flex';
+}
+document.getElementById('closePlayer').onclick = ()=>{
+  const overlay = document.getElementById('playerOverlay');
+  const iframe  = document.getElementById('playerIframe');
+  iframe.src = '';
+  overlay.style.display = 'none';
+};
+
+/* ==================== TAB SWITCHING ==================== */
+document.querySelectorAll('.tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    // activate selected tab
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    tab.classList.add('active');
+
+    // show corresponding panel
+    const target = tab.dataset.target;
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    document.getElementById(target).classList.add('active');
+  });
+});
+
+/* ==================== INPUT FIELD ==================== */
+document.getElementById('searchInput').addEventListener('keypress', e=>{
+  if (e.key === 'Enter'){
+    const q = e.target.value.trim();
+    if (q) performSearch(q);
   }
 });
 </script>
